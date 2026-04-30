@@ -69,6 +69,7 @@ def first_header(msg, name):
 
 def body_text(msg):
     if msg.is_multipart():
+        plain_part = ""
         html_part = ""
         for part in msg.walk():
             if part.get_content_disposition() == "attachment":
@@ -79,32 +80,98 @@ def body_text(msg):
             except Exception:
                 continue
             if ctype == "text/plain" and str(content).strip():
-                return str(content).strip()
+                cleaned = clean_text(str(content))
+                if cleaned and not looks_like_markup_dump(cleaned):
+                    return cleaned
+                plain_part = cleaned
             if ctype == "text/html" and str(content).strip() and not html_part:
                 html_part = str(content)
         if html_part:
             return html_to_text(html_part)
-        return ""
+        return plain_part
     try:
         content = msg.get_content()
     except Exception:
         return ""
     if msg.get_content_type() == "text/html":
         return html_to_text(str(content))
-    return str(content).strip()
+    content = str(content)
+    if looks_like_html(content):
+        return html_to_text(content)
+    return clean_text(content)
 
 
 def html_to_text(value):
+    value = strip_style_content(value)
     parser = VisibleTextParser()
     parser.feed(value)
     parser.close()
     text = parser.text()
-    return text or re.sub(r"<[^>]+>", " ", html.unescape(value)).strip()
+    return clean_text(text or re.sub(r"<[^>]+>", " ", html.unescape(value)))
+
+
+def strip_style_content(value):
+    value = re.sub(r"(?is)<(script|style|head|title|meta)\b[^>]*>.*?</\1>", " ", value)
+    value = re.sub(r"(?is)<!--.*?-->", " ", value)
+    return strip_css_blocks(value)
+
+
+def strip_css_blocks(value):
+    result = []
+    i = 0
+    length = len(value)
+    while i < length:
+        media = re.search(r"@(?:media|font-face|supports|keyframes)\b", value[i:], flags=re.IGNORECASE)
+        selector = re.search(r"(?m)^[ \t]*(?:[.#][\w-]+|[a-z][\w-]*(?:[.#][\w-]+)?|table\.body|[.#][\w-]+\s+[.#\w-]+)[^{\n]{0,160}\{", value[i:], flags=re.IGNORECASE)
+        candidates = [m for m in (media, selector) if m]
+        if not candidates:
+            result.append(value[i:])
+            break
+        match = min(candidates, key=lambda m: m.start())
+        start = i + match.start()
+        brace = value.find("{", start)
+        if brace == -1:
+            result.append(value[i:])
+            break
+        result.append(value[i:start])
+        depth = 0
+        j = brace
+        while j < length:
+            if value[j] == "{":
+                depth += 1
+            elif value[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    j += 1
+                    break
+            j += 1
+        i = j
+    return "".join(result)
+
+
+def clean_text(value):
+    value = html.unescape(value)
+    value = strip_style_content(value)
+    value = re.sub(r"(?m)^[ \t]*[.#]?[A-Za-z][\w .#:\->,+~*=\"'()[\]]{0,120}:\s*[^;\n]{0,300};?\s*$", " ", value)
+    value = re.sub(r"(?m)^[ \t]*(?:@media|@font-face|mso-|-webkit-|moz-|padding-|margin-|font-|line-height|box-sizing|border-|background|color|width|height|display)\b.*$", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"[ \t\r\f\v]+", " ", value)
+    value = re.sub(r" *\n *", "\n", value)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    return value.strip()
+
+
+def looks_like_html(value):
+    return bool(re.search(r"(?is)<(?:html|body|table|div|style|p|br|span)\b", value))
+
+
+def looks_like_markup_dump(value):
+    css_markers = len(re.findall(r"(?:@media|\{|\}|!important|table\.body|mso-|webkit-|font-size|padding)", value, flags=re.IGNORECASE))
+    return css_markers >= 4 or len(value) > 1200 and css_markers >= 2
 
 
 def code_hint(text):
     patterns = [
-        r"(?:验证码|verification code|code)[^\dA-Z]{0,40}([A-Z0-9]{4,10})",
+        r"(?:验证码|verification code|code)[^\dA-Z]{0,40}([A-Z0-9]*\d[A-Z0-9]{3,9})",
         r"\b([0-9]{6,8})\b",
     ]
     for pattern in patterns:
