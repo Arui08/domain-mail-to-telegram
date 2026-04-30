@@ -181,6 +181,19 @@ def code_hint(text):
     return ""
 
 
+def code_context(text, code):
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    picked = []
+    for line in lines:
+        if code in line or re.search(r"(verification|verify|验证码|code|expire|过期|valid)", line, flags=re.IGNORECASE):
+            picked.append(line)
+        if len(picked) >= 5:
+            break
+    if not picked:
+        picked = lines[:4]
+    return "\n".join(picked)
+
+
 def attachment_names(msg):
     names = []
     for part in msg.walk() if msg.is_multipart() else []:
@@ -217,7 +230,7 @@ def main():
     body = body_text(msg)
     code = code_hint(body)
     if code:
-        body = f"Code: {code}\n\n{body}"
+        body = f"Code: {code}\n\n{code_context(body, code)}"
     if len(body) > 2600:
         body = body[:2600] + "\n\n...[truncated]"
     attachments = attachment_names(msg)

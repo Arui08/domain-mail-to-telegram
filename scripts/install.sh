@@ -20,7 +20,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 printf 'postfix postfix/mailname string %s\npostfix postfix/main_mailer_type string Internet Site\n' "${MAIL_HOSTNAME}" | debconf-set-selections
-apt-get install -y postfix python3 ca-certificates ufw swaks
+apt-get install -y postfix python3 ca-certificates ufw swaks certbot
 
 install -m 0755 scripts/mail-to-tg.py /usr/local/bin/mail-to-tg.py
 touch /var/log/mail-to-tg.log
@@ -63,7 +63,24 @@ newaliases
 
 ufw allow OpenSSH
 ufw allow 25/tcp
+ufw allow 80/tcp
 ufw --force enable
+
+if certbot certonly --standalone -d "${MAIL_HOSTNAME}" --agree-tos --register-unsafely-without-email --non-interactive; then
+  postconf -e "smtpd_tls_cert_file = /etc/letsencrypt/live/${MAIL_HOSTNAME}/fullchain.pem"
+  postconf -e "smtpd_tls_key_file = /etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem"
+  postconf -e 'smtpd_tls_security_level = may'
+  postconf -e 'smtpd_tls_loglevel = 1'
+  postconf -e 'smtpd_tls_received_header = yes'
+  mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+  cat > /etc/letsencrypt/renewal-hooks/deploy/reload-postfix.sh <<'EOF'
+#!/usr/bin/env bash
+systemctl reload postfix
+EOF
+  chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-postfix.sh
+else
+  echo "Warning: could not issue Let's Encrypt certificate. Check DNS and port 80, then run certbot again."
+fi
 
 systemctl restart postfix
 postfix check
