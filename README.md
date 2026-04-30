@@ -54,14 +54,14 @@ If you use Cloudflare, the `mail` A record must be **DNS only**, not proxied.
 SSH into your VPS and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/domain-mail-to-telegram/main/scripts/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Arui08/domain-mail-to-telegram/main/scripts/install.sh -o install.sh
 sudo bash install.sh
 ```
 
 Or clone the repository:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/domain-mail-to-telegram.git
+git clone https://github.com/Arui08/domain-mail-to-telegram.git
 cd domain-mail-to-telegram
 sudo bash scripts/install.sh
 ```
