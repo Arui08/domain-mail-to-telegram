@@ -1,13 +1,45 @@
 #!/usr/bin/env python3
 import html
+import re
 import sys
 import urllib.parse
 import urllib.request
 from email import policy
 from email.parser import BytesParser
+from html.parser import HTMLParser
 
 ENV_PATH = "/etc/mail-tg.env"
 LOG_PATH = "/var/log/mail-to-tg.log"
+
+
+class VisibleTextParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.skip_depth = 0
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style", "head", "title", "meta"}:
+            self.skip_depth += 1
+        if tag in {"br", "p", "div", "tr", "table", "li", "h1", "h2", "h3"}:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in {"script", "style", "head", "title", "meta"} and self.skip_depth:
+            self.skip_depth -= 1
+        if tag in {"p", "div", "tr", "table", "li", "h1", "h2", "h3"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.skip_depth and data.strip():
+            self.parts.append(data)
+
+    def text(self):
+        text = html.unescape(" ".join(self.parts))
+        text = re.sub(r"[ \t\r\f\v]+", " ", text)
+        text = re.sub(r" *\n *", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
 
 def log(message):
@@ -51,13 +83,35 @@ def body_text(msg):
             if ctype == "text/html" and str(content).strip() and not html_part:
                 html_part = str(content)
         if html_part:
-            return html.unescape(html_part).replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n").strip()
+            return html_to_text(html_part)
         return ""
     try:
         content = msg.get_content()
     except Exception:
         return ""
+    if msg.get_content_type() == "text/html":
+        return html_to_text(str(content))
     return str(content).strip()
+
+
+def html_to_text(value):
+    parser = VisibleTextParser()
+    parser.feed(value)
+    parser.close()
+    text = parser.text()
+    return text or re.sub(r"<[^>]+>", " ", html.unescape(value)).strip()
+
+
+def code_hint(text):
+    patterns = [
+        r"(?:验证码|verification code|code)[^\dA-Z]{0,40}([A-Z0-9]{4,10})",
+        r"\b([0-9]{6,8})\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return ""
 
 
 def attachment_names(msg):
@@ -94,6 +148,9 @@ def main():
     subject = first_header(msg, "Subject")
     date = first_header(msg, "Date")
     body = body_text(msg)
+    code = code_hint(body)
+    if code:
+        body = f"Code: {code}\n\n{body}"
     if len(body) > 2600:
         body = body[:2600] + "\n\n...[truncated]"
     attachments = attachment_names(msg)
